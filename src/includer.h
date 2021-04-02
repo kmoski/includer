@@ -13,14 +13,12 @@ using std::string;
 
 class includer {
   bool continue_parse(const fs::directory_entry &i) noexcept;
-  bool find_include(const fs::directory_entry &i, const char *sub) noexcept;
   bool check_include(const fs::directory_entry &i, string inc) noexcept;
 
   fs::path main_dir;
   vector<fs::path> include_dirs;
   ifstream ifile;
   unsigned long long line;
-  string tmp;
   char tmp_c;
  public:
   includer(const int &argc, char *argv[]);

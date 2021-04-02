@@ -9,7 +9,8 @@ using std::move;
 const char *include_string = "include";
 
 includer::includer(const int &argc, char **argv) {
-  if (argc < 3) {
+  // if (argc < 3) {
+  if (argc < 2) {
     cout << "Incorrect argc:" << endl;
     cout << "argc = " << argc << endl;
     throw;
@@ -20,15 +21,15 @@ includer::includer(const int &argc, char **argv) {
     cout << main_dir << endl;
     throw;
   }
-  for (unsigned i{2}; i < argc; ++i) {
-    include_dirs.emplace_back(argv[i]);
-    if (!fs::exists(include_dirs.back()) ||
-        !fs::is_directory(include_dirs.back())) {
-      cout << "Incorrect include directory:" << endl;
-      cout << include_dirs.back() << endl;
-      throw;
-    }
-  }
+  // for (unsigned i{2}; i < argc; ++i) {
+  //   include_dirs.emplace_back(argv[i]);
+  //   if (!fs::exists(include_dirs.back()) ||
+  //       !fs::is_directory(include_dirs.back())) {
+  //     cout << "Incorrect include directory:" << endl;
+  //     cout << include_dirs.back() << endl;
+  //     throw;
+  //   }
+  // }
 }
 void includer::recursive_iteration() noexcept {
   for (auto &i : fs::recursive_directory_iterator(main_dir)) {
@@ -36,6 +37,7 @@ void includer::recursive_iteration() noexcept {
     if (ext == ".cpp" || ext == ".h") {
       line = 1;
       ifile.open(i.path());
+      cout << endl << "passed" << i.path() << endl;
       while (!ifile.eof()) {
         tmp_c = ifile.peek();
         if (!continue_parse(i)) {
@@ -124,7 +126,19 @@ bool includer::continue_parse(const fs::directory_entry &i) noexcept {
           break;
         }
         case '*': {  // exclude find in block comment
-          // TODO(kmosk): exclude find in block comment
+          // TODO: count lines
+          bool block_comment = true;
+          ifile.get();
+          if (ifile.eof()) {
+            cout << "error "
+                 << i.path().string() << ':' << line
+                 << ":Unexpected end of file"
+                 << ":Read block comment" << endl;
+            return false;
+          }
+          while (block_comment) {
+            
+          }
           break;
         }
         default: {
@@ -138,7 +152,52 @@ bool includer::continue_parse(const fs::directory_entry &i) noexcept {
       break;
     }
     case '\"': {  // exclude find in string
-      // TODO(kmosk): exclude find in string
+      // TODO(kmosk): add check in R"()" and multi line string
+      bool end_string = false;
+      while (!end_string) {
+        ifile.get();
+        if (ifile.eof()) {
+          cout << "error "
+               << i.path().string() << ':' << line
+               << ":Unexpected end of file"
+               << ":Read string" << endl;
+          return false;
+        }
+        tmp_c = ifile.peek();
+        switch (tmp_c) {
+          case '\\': {
+            ifile.get();
+            if (ifile.eof()) {
+              cout << "error "
+                   << i.path().string() << ':' << line
+                   << ":Unexpected end of file"
+                   << ":Read string" << endl;
+              return false;
+            }
+            ifile.get();
+            if (ifile.eof()) {
+              cout << "error "
+                   << i.path().string() << ':' << line
+                   << ":Unexpected end of file"
+                   << ":Read string" << endl;
+              return false;
+            }
+            break;
+          }
+          case '"': {
+            ifile.get();
+            if (ifile.eof()) {
+              cout << "error "
+                   << i.path().string() << ':' << line
+                   << ":Unexpected end of file"
+                   << ":Read string" << endl;
+              return false;
+            }
+            end_string = true;
+            break;
+          }
+        }
+      }
       break;
     }
     case '#': {
@@ -187,34 +246,105 @@ bool includer::continue_parse(const fs::directory_entry &i) noexcept {
           }
           tmp_c = ifile.peek();
           if (tmp_c == '*') {
-            // TODO(kmosk): process block comment
+            // TODO: count lines
+            bool block_comment = true;
+            while (block_comment) {
+              ifile.get();
+              if (ifile.eof()) {
+                cout << "error "
+                     << i.path().string() << ':' << line
+                     << ":Unexpected end of file"
+                     << ":Read block comment" << endl;
+                return false;
+              }
+              tmp_c = ifile.peek();
+              if (tmp_c == '*') {
+                ifile.get();
+                if (ifile.eof()) {
+                  cout << "error "
+                       << i.path().string() << ':' << line
+                       << ":Unexpected end of file"
+                       << ":Read block comment" << endl;
+                  return false;
+                }
+                tmp_c = ifile.peek();
+                if (tmp_c == '/') {
+                  block_comment = false;
+                }
+              }
+            }
           } else {
-            // TODO(kmosk): error
+            cout << "error "
+                 << i.path().string() << ':' << line
+                 << ":Wrong syntax"
+                 << ":Read after \"include \\\"" << endl;
+            return false;
           }
         }
-        // TODO(kmosk): process <> or ""
+        tmp_c = ifile.peek();
+        while (tmp_c == ' ') {  // skip space
+          ifile.get();
+          if (ifile.eof()) {
+            cout << "error "
+                 << i.path().string() << ':' << line
+                 << ":Unexpected end of file"
+                 << ":Read after \"include\"" << endl;
+            return false;
+          }
+          tmp_c = ifile.peek();
+        }
+        switch (tmp_c) {
+          case '\"': {  // process "..."
+            string include_path;
+            bool end_include = false;
+            while (!end_include) {
+              ifile.get();
+              if (ifile.eof()) {
+                cout << "error "
+                     << i.path().string() << ':' << line
+                     << ":Unexpected end of file"
+                     << ":Read include" << endl;
+                return false;
+              }
+              include_path += tmp_c;
+              tmp_c = ifile.peek();
+              if (tmp_c == '\"') {
+                end_include = true;
+              }
+            }
+            check_include(i, std::move(include_path));
+            break;
+          }
+          case '<': {  // process <...>
+            string include_path;
+            bool end_include = false;
+            while (!end_include) {
+              ifile.get();
+              if (ifile.eof()) {
+                cout << "error "
+                     << i.path().string() << ':' << line
+                     << ":Unexpected end of file"
+                     << ":Read include" << endl;
+                return false;
+              }
+              include_path += tmp_c;
+              tmp_c = ifile.peek();
+              if (tmp_c == '\"') {
+                end_include = true;
+              }
+            }
+            check_include(i, std::move(include_path));
+            break;
+          }
+          default: {
+            cout << "error "
+                 << i.path().string() << ':' << line
+                 << ":Wrong syntax"
+                 << ":Expected '\"' or '<'" << endl;
+            return false;
+          }
+        }
       }
-
-
-
-      // if (numb_pos != string::npos) {  // tmp contain '#'
-      //   if (tmp.length() == 1) {  // read only one '#'
-      //     if (!(ifile >> tmp)) {  // read next word
-      //       cout << "error "
-      //            << i.path().string() << ':' << ifile.tellg()
-      //            << ":Unexpected end of file"
-      //            << ":Read after #" << endl;
-      //       break;
-      //     }
-      //     if (!find_include(i, "include")) {
-      //       break;
-      //     }
-      //   } else {
-      //     if (!find_include(i, "#include")) {
-      //       break;
-      //     }
-      //   }
-      // }
       break;
     }
     case '\n': {  // line ends Unix style
@@ -235,70 +365,45 @@ bool includer::continue_parse(const fs::directory_entry &i) noexcept {
       }
       break;
     }
-    default: break;
-  }
-  return true;
-}
-bool includer::find_include(const fs::directory_entry &i,
-                            const char *sub) noexcept {
-  auto inc_pos = tmp.find(sub);
-  if (inc_pos != string::npos) {  // tmp contain "include" or "#include"
-    if (tmp == sub) {  // tmp equal "include" or "#include"
-      if (!(ifile >> tmp)) {  // read after include
-        cout << "error "
-             << i.path().string() << ':' << ifile.tellg()
-             << ":Unexpected end of file"
-             << ":Read after \"[#]include\"" << endl;
-        return false;
-      }
-      if (!check_include(i, move(tmp))) {
-        return false;
-      }
-    } else {  // tmp contain sub, but contain anything else
-      if (!check_include(i, move(tmp.substr(strlen(sub))))) {
-        return false;
-      }
+    default: {
+      ifile.get();
+      break;
     }
   }
   return true;
 }
+/**
+ * @brief
+ * @param i
+ * @param inc - probably a string like [",<]path/to/include
+ * @return
+ */
 bool includer::check_include(const fs::directory_entry &i,
                              string inc) noexcept {
   fs::path include_path;
   bool exp;
-  unsigned long pos;
   switch (inc.at(0)) {
     case '\"': {
       exp = true;
       inc = inc.substr(1);
-      pos = inc.find('\"');
       break;
     }
     case '<': {
       exp = false;
       inc = inc.substr(1);
-      pos = inc.find('>');
       break;
     }
     default:
       cout << "error "
            << i.path().string() << ':' << ifile.tellg()
            << R"(:Can not find '"' or '<')"
-           << ':' << tmp << endl;
+           << ':' << inc << endl;
       return false;
   }
-  if (pos == string::npos) {
-    cout << "error "
-         << i.path().string() << ":" << ifile.tellg()
-         << R"(:Can not find '"' or '>')"
-         << ':' << tmp << endl;  // TODO(kmosk): space
-    return false;
-  }
-  include_path = inc.substr(0, pos);
+  include_path = inc;
   cout << "found " << i.path().string() << ' '
        << (exp ? '"' : '<')
        << include_path.string()
        << (exp ? '"' : '>') << endl;
-  // TODO(kmosk): check
   return true;
 }

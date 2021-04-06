@@ -7,6 +7,7 @@ int main(int argc, char *argv[]) {
   } catch (...) {
     return -1;
   }
-  inc->recursive_iteration();
+  inc->recursive_initialization();
+  
   return 0;
 }

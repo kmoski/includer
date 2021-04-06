@@ -32,7 +32,7 @@ includer::includer(const int &argc, char **argv) {
   //   }
   // }
 }
-void includer::recursive_iteration() noexcept {
+void includer::recursive_initialization() noexcept {
   for (auto &i : fs::recursive_directory_iterator(main_dir)) {
     i_fs_file = &i;
     auto ext = i.path().extension();
@@ -106,6 +106,7 @@ bool includer::continue_parse() noexcept {
       return read_next("Continue parse", msg_type::none);
     }
   }
+  return true;
 }
 bool includer::parse_comment() noexcept {
   tmp_c = i_file.peek();
@@ -285,19 +286,21 @@ bool includer::parse_directive() noexcept {
     tmp_c = i_file.peek();
     switch (tmp_c) {
       case '\"': {  // process "..."
+        auto position = i_file.tellg();
         if (!read_next("Read after '\"'")) {
           return false;
         }
-        if (!parse_include(true)) {
+        if (!parse_include(true, position)) {
           return false;
         }
         break;
       }
       case '<': {  // process <...>
+        auto position = i_file.tellg();
         if (!read_next("Read after '<'")) {
           return false;
         }
-        if (!parse_include(false)) {
+        if (!parse_include(false, position)) {
           return false;
         }
         break;
@@ -311,7 +314,6 @@ bool includer::parse_directive() noexcept {
         return true;
         // message("Wrong syntax", "Expected '\"' or '<'");
         // return false;
-        break;
       }
     }
   } else {
@@ -321,7 +323,7 @@ bool includer::parse_directive() noexcept {
   }
   return true;
 }
-bool includer::parse_include(bool exp) noexcept {
+bool includer::parse_include(bool exp, const ifstream::pos_type &position) noexcept {
   string include_path;
   bool end_include = false;
   while (!end_include) {
@@ -337,7 +339,12 @@ bool includer::parse_include(bool exp) noexcept {
     }
   }
   // TODO(kmosk): include_path and exp is result
-  // message((exp ? "\"\"" : "<>"), include_path, msg_type::found);
+  include_t inc;
+  inc.path = include_path;
+  inc.position = position;
+  inc.exp = exp;
+  includes[i_fs_file->path()].push_back(inc);
+  message((exp ? "\"\"" : "<>"), include_path, msg_type::found);
   return true;
 }
 bool includer::parse_end_line(msg_type type, bool def) noexcept {

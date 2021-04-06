@@ -19,3 +19,4 @@ some text*/
  */<ok7>
 #include/*text
  */ <ok8>
+# /*text*/ include <wrong>

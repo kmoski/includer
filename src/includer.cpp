@@ -6,7 +6,8 @@ using std::cout;
 using std::endl;
 using std::move;
 
-const char *include_string = "include";
+static const char *include_string = "include";
+static const auto buf_len = strlen(include_string);
 
 includer::includer(const int &argc, char **argv) {
   // if (argc < 3) {
@@ -33,377 +34,359 @@ includer::includer(const int &argc, char **argv) {
 }
 void includer::recursive_iteration() noexcept {
   for (auto &i : fs::recursive_directory_iterator(main_dir)) {
+    i_fs_file = &i;
     auto ext = i.path().extension();
     if (ext == ".cpp" || ext == ".h") {
       line = 1;
-      ifile.open(i.path());
-      cout << endl << "passed" << i.path() << endl;
-      while (!ifile.eof()) {
-        tmp_c = ifile.peek();
-        if (!continue_parse(i)) {
+      i_file.open(i.path());
+      // cout << endl << "passed" << i.path() << endl;
+      while (!i_file.eof()) {
+        tmp_c = i_file.peek();
+        if (!continue_parse()) {
           break;
         }
       }
-      ifile.close();
+      i_file.close();
     }
   }
 }
-bool includer::continue_parse(const fs::directory_entry &i) noexcept {
+bool includer::continue_parse() noexcept {
   switch (tmp_c) {
     case '/': {  // exclude find in comment
-      ifile.get();
-      if (ifile.eof()) {
-        cout << "error "
-             << i.path().string() << ':' << line
-             << ":Unexpected end of file"
-             << ":Read after '/'" << endl;
-        return false;
-      }
-      tmp_c = ifile.peek();
-      switch (tmp_c) {
-        case '/': {  // exclude find in line comment
-          bool end_comment = false;
-          while (!end_comment) {
-            ifile.get();
-            if (ifile.eof()) {  // file ends line comment
-              return false;
-            }
-            tmp_c = ifile.peek();
-            switch (tmp_c) {
-              case '\n': {  // line ends Unix style
-                ifile.get();
-                line++;
-                end_comment = true;
-                break;
-              }
-              case '\r': {
-                ifile.get();
-                if (ifile.eof()) {  // file ends macOS style
-                  return false;
-                }
-                if (ifile.peek() == '\n') {  // line ends Windows style
-                  ifile.get();
-                  line++;
-                } else {  // line ends macOS style
-                  line++;
-                }
-                end_comment = true;
-                break;
-              }
-              case '\\': {  // multi-line comment
-                ifile.get();
-                if (ifile.eof()) {  // file ends '\'
-                  return false;
-                }
-                tmp_c = ifile.peek();
-                switch (tmp_c) {
-                  case '\n': {  // line ends Unix style
-                    ifile.get();
-                    line++;
-                    break;
-                  }
-                  case '\r': {
-                    ifile.get();
-                    if (ifile.eof()) {  // file ends macOS style
-                      return false;
-                    }
-                    if (ifile.peek() == '\n') {  // line ends Windows style
-                      ifile.get();
-                      line++;
-                    } else {  // line ends macOS style
-                      line++;
-                    }
-                    break;
-                  }
-                  default:
-                    break;
-                }
-              }
-              default:
-                break;
-            }
-          }
-          break;
-        }
-        case '*': {  // exclude find in block comment
-          // TODO: count lines
-          bool block_comment = true;
-          ifile.get();
-          if (ifile.eof()) {
-            cout << "error "
-                 << i.path().string() << ':' << line
-                 << ":Unexpected end of file"
-                 << ":Read block comment" << endl;
-            return false;
-          }
-          while (block_comment) {
-            
-          }
-          break;
-        }
-        default: {
-          cout << "error "
-               << i.path().string() << ':' << line
-               << ":Wrong syntax"
-               << ":Expect '/' or '*' after '/'" << endl;
-          return false;
-        }
-      }
-      break;
+      return read_next("Read after '/'") &&
+             parse_comment();
     }
     case '\"': {  // exclude find in string
-      // TODO(kmosk): add check in R"()" and multi line string
-      bool end_string = false;
-      while (!end_string) {
-        ifile.get();
-        if (ifile.eof()) {
-          cout << "error "
-               << i.path().string() << ':' << line
-               << ":Unexpected end of file"
-               << ":Read string" << endl;
-          return false;
-        }
-        tmp_c = ifile.peek();
-        switch (tmp_c) {
-          case '\\': {
-            ifile.get();
-            if (ifile.eof()) {
-              cout << "error "
-                   << i.path().string() << ':' << line
-                   << ":Unexpected end of file"
-                   << ":Read string" << endl;
-              return false;
-            }
-            ifile.get();
-            if (ifile.eof()) {
-              cout << "error "
-                   << i.path().string() << ':' << line
-                   << ":Unexpected end of file"
-                   << ":Read string" << endl;
-              return false;
-            }
-            break;
+      return read_next("Read after '\"'") &&
+             parse_string();
+    }
+    case '#': {
+      return read_next("Read after '#'") &&
+             parse_directive();
+    }
+    case '\'': {
+      if (!read_next("Read symbols, after '")) {  // read '
+        return false;
+      }
+      tmp_c = i_file.peek();
+      switch (tmp_c) {
+        case '\\': {
+          if (!read_next("Read symbols, after \\")) {  // read '\'
+            return false;
           }
-          case '"': {
-            ifile.get();
-            if (ifile.eof()) {
-              cout << "error "
-                   << i.path().string() << ':' << line
-                   << ":Unexpected end of file"
-                   << ":Read string" << endl;
-              return false;
-            }
-            end_string = true;
-            break;
+          if (!read_next("Read symbols, after " + std::to_string(tmp_c))) {  // read control symbol
+            return false;
           }
+          break;
         }
+        case '#':
+        case '/':
+        default: {
+          if (!read_next("Read symbols, after " + std::to_string(tmp_c))) {  // read any symbol
+            return false;
+          }
+          break;
+        }
+      }
+      if (!read_next("Read symbols, after '")) {  // read '
+        return false;
       }
       break;
     }
-    case '#': {
-      do {
-        ifile.get();
-        if (ifile.eof()) {
-          cout << "error "
-               << i.path().string() << ':' << line
-               << ":Unexpected end of file"
-               << ":Read after '#'" << endl;
-          return false;
-        }
-        tmp_c = ifile.peek();
-      } while (tmp_c == ' ');
-      auto buf_len = strlen(include_string);
-      char buf[buf_len];
-      ifile.read(buf, buf_len);
-      if (ifile.eof()) {
-        cout << "error "
-             << i.path().string() << ':' << line
-             << ":Unexpected end of file"
-             << ":Read after \"include\"" << endl;
+    case '\n':
+    case '\r': {
+      // no need to get a character from the stream
+      parse_end_line(msg_type::none);
+      if (endl_default) {
         return false;
       }
-      if (memcmp(include_string, buf, buf_len) == 0) {
-        tmp_c = ifile.peek();
-        while (tmp_c == ' ') {  // skip space
-          ifile.get();
-          if (ifile.eof()) {
-            cout << "error "
-                 << i.path().string() << ':' << line
-                 << ":Unexpected end of file"
-                 << ":Read after \"include\"" << endl;
-            return false;
-          }
-          tmp_c = ifile.peek();
-        }
-        if (tmp_c == '/') {
-          ifile.get();
-          if (ifile.eof()) {
-            cout << "error "
-                 << i.path().string() << ':' << line
-                 << ":Unexpected end of file"
-                 << ":Read after '/'" << endl;
-            return false;
-          }
-          tmp_c = ifile.peek();
-          if (tmp_c == '*') {
-            // TODO: count lines
-            bool block_comment = true;
-            while (block_comment) {
-              ifile.get();
-              if (ifile.eof()) {
-                cout << "error "
-                     << i.path().string() << ':' << line
-                     << ":Unexpected end of file"
-                     << ":Read block comment" << endl;
-                return false;
-              }
-              tmp_c = ifile.peek();
-              if (tmp_c == '*') {
-                ifile.get();
-                if (ifile.eof()) {
-                  cout << "error "
-                       << i.path().string() << ':' << line
-                       << ":Unexpected end of file"
-                       << ":Read block comment" << endl;
-                  return false;
-                }
-                tmp_c = ifile.peek();
-                if (tmp_c == '/') {
-                  block_comment = false;
-                }
-              }
-            }
-          } else {
-            cout << "error "
-                 << i.path().string() << ':' << line
-                 << ":Wrong syntax"
-                 << ":Read after \"include \\\"" << endl;
-            return false;
-          }
-        }
-        tmp_c = ifile.peek();
-        while (tmp_c == ' ') {  // skip space
-          ifile.get();
-          if (ifile.eof()) {
-            cout << "error "
-                 << i.path().string() << ':' << line
-                 << ":Unexpected end of file"
-                 << ":Read after \"include\"" << endl;
-            return false;
-          }
-          tmp_c = ifile.peek();
-        }
+      return true;
+    }
+    default: {
+      return read_next("Continue parse", msg_type::none);
+    }
+  }
+}
+bool includer::parse_comment() noexcept {
+  tmp_c = i_file.peek();
+  switch (tmp_c) {
+    case '/': {  // exclude find in line comment
+      bool end_comment = false;
+      if (!read_next(R"(Read after "//")")) {
+        return false;
+      }
+      while (!end_comment) {
+        tmp_c = i_file.peek();
         switch (tmp_c) {
-          case '\"': {  // process "..."
-            string include_path;
-            bool end_include = false;
-            while (!end_include) {
-              ifile.get();
-              if (ifile.eof()) {
-                cout << "error "
-                     << i.path().string() << ':' << line
-                     << ":Unexpected end of file"
-                     << ":Read include" << endl;
-                return false;
-              }
-              include_path += tmp_c;
-              tmp_c = ifile.peek();
-              if (tmp_c == '\"') {
-                end_include = true;
-              }
+          case '\n':
+          case '\r': {  // end line comment
+            parse_end_line(msg_type::none);
+            if (endl_default) {
+              return false;
             }
-            check_include(i, std::move(include_path));
+            end_comment = true;
             break;
           }
-          case '<': {  // process <...>
-            string include_path;
-            bool end_include = false;
-            while (!end_include) {
-              ifile.get();
-              if (ifile.eof()) {
-                cout << "error "
-                     << i.path().string() << ':' << line
-                     << ":Unexpected end of file"
-                     << ":Read include" << endl;
-                return false;
-              }
-              include_path += tmp_c;
-              tmp_c = ifile.peek();
-              if (tmp_c == '\"') {
-                end_include = true;
-              }
+          case '\\': {  // multi-line comment
+            if (!read_next(R"(Read comment after "\")", msg_type::warning)) {
+              return false;
             }
-            check_include(i, std::move(include_path));
+            if (!parse_end_line(msg_type::warning, false)) {
+              return false;
+            }
             break;
           }
           default: {
-            cout << "error "
-                 << i.path().string() << ':' << line
-                 << ":Wrong syntax"
-                 << ":Expected '\"' or '<'" << endl;
-            return false;
+            if (!read_next("Read comment without end line", msg_type::warning)) {
+              return false;
+            }
+            break;
           }
         }
       }
       break;
     }
-    case '\n': {  // line ends Unix style
-      ifile.get();
-      line++;
-      break;
-    }
-    case '\r': {
-      ifile.get();
-      if (ifile.eof()) {  // file ends macOS style
+    case '*': {  // exclude find in block comment
+      if (!read_next(R"(Read after "/*")")) {
         return false;
       }
-      if (ifile.peek() == '\n') {  // line ends Windows style
-        ifile.get();
-        line++;
-      } else {  // line ends macOS style
-        line++;
+      if (!parse_block_comment()) {
+        return false;
       }
       break;
     }
     default: {
-      ifile.get();
-      break;
+      // message("??? syntax", "Expect '/' or '*' after '/'", msg_type::mosk);
+      return true;
     }
   }
   return true;
 }
-/**
- * @brief
- * @param i
- * @param inc - probably a string like [",<]path/to/include
- * @return
- */
-bool includer::check_include(const fs::directory_entry &i,
-                             string inc) noexcept {
-  fs::path include_path;
-  bool exp;
-  switch (inc.at(0)) {
-    case '\"': {
-      exp = true;
-      inc = inc.substr(1);
+bool includer::parse_block_comment() noexcept {
+  bool block_comment = true;
+  while (block_comment) {
+    tmp_c = i_file.peek();
+    switch (tmp_c) {
+      case '*': {
+        if (!read_next("Read block comment after '*'", msg_type::warning)) {
+          return false;
+        }
+        tmp_c = i_file.peek();
+        if (tmp_c == '/') {
+          if (!read_next("Read block comment without end line", msg_type::warning)) {
+            return false;
+          }
+          block_comment = false;
+        }
+        break;
+      }
+      case '\n':
+      case '\r': {  // end line comment
+        parse_end_line(msg_type::none);
+        if (endl_default) {
+          return false;
+        }
+        break;
+      }
+      default: {
+        if (!read_next(R"(Read block comment without "*/")", msg_type::warning)) {
+          return false;
+        }
+        break;
+      }
+    }
+  }
+  return true;
+}
+bool includer::parse_string() noexcept {
+  // TODO(kmosk): add check in R"()"
+  //   std::string s = R"(This is "sample" string)";
+  bool end_string = false;
+  while (!end_string) {
+    tmp_c = i_file.peek();
+    switch (tmp_c) {
+      case '\\': {  // exclude control symbols (\t, \n, \0 and other)
+        if (!read_next("Read string after '\'")) {
+          return false;
+        }
+        // TODO(kmosk): add check multi line string
+        //   std::string s = "This is \
+        //                    \"sample\" string";
+        if (!read_next("Read string after control symbol")) {
+          return false;
+        }
+        break;
+      }
+      case '"': {
+        if (!read_next("Read end of string after '\"'")) {
+          return false;
+        }
+        end_string = true;
+        break;
+      }
+      default: {
+        if (!read_next("Read end of string without '\"'")) {
+          return false;
+        }
+        break;
+      }
+    }
+  }
+  return true;
+}
+bool includer::parse_directive() noexcept {
+  tmp_c = i_file.peek();
+  while (tmp_c == ' ') {  // TODO(kmsok): check only for space, add \t and ?other?
+    if (!read_next("Read directive after '#'")) {
+      return false;
+    }
+    tmp_c = i_file.peek();
+  }
+  // TODO(kmosk): check for block comment
+  char buf[buf_len];
+  i_file.read(buf, buf_len);
+  if (i_file.eof()) {
+    return false;
+  }
+  if (memcmp(include_string, buf, buf_len) == 0) {
+    tmp_c = i_file.peek();
+    while (tmp_c == ' ') {  // TODO(kmsok): check only for space, add \t and ?other?
+      if (!read_next(R"(Read after "include")")) {
+        return false;
+      }
+      tmp_c = i_file.peek();
+    }
+    tmp_c = i_file.peek();
+    if (tmp_c == '/') {
+      if (!read_next(R"(Read after "include /")")) {
+        return false;
+      }
+      tmp_c = i_file.peek();
+      if (tmp_c == '*') {
+        if (!read_next(R"(Read after "include /*")")) {
+          return false;
+        }
+        if (!parse_block_comment()) {
+          return false;
+        }
+        tmp_c = i_file.peek();
+        while (tmp_c == ' ') {  // TODO(kmsok): check only for space, add \t and ?other?
+          if (!read_next(R"(Read after "include")")) {
+            return false;
+          }
+          tmp_c = i_file.peek();
+        }
+      } else {
+        message("Wrong syntax", R"(Expect '*' after "include /")");
+        return false;
+      }
+    }
+    // < and "
+    tmp_c = i_file.peek();
+    switch (tmp_c) {
+      case '\"': {  // process "..."
+        if (!read_next("Read after '\"'")) {
+          return false;
+        }
+        if (!parse_include(true)) {
+          return false;
+        }
+        break;
+      }
+      case '<': {  // process <...>
+        if (!read_next("Read after '<'")) {
+          return false;
+        }
+        if (!parse_include(false)) {
+          return false;
+        }
+        break;
+      }
+      default: {
+        // #if !defined(MBEDTLS_CONFIG_FILE)
+        // #include "config.h"
+        // #else
+        // #include MBEDTLS_CONFIG_FILE
+        // #endif
+        return true;
+        // message("Wrong syntax", "Expected '\"' or '<'");
+        // return false;
+        break;
+      }
+    }
+  } else {
+    for (unsigned long i(0); i < buf_len; ++i) {
+      i_file.unget();
+    }
+  }
+  return true;
+}
+bool includer::parse_include(bool exp) noexcept {
+  string include_path;
+  bool end_include = false;
+  while (!end_include) {
+    tmp_c = i_file.peek();
+    if (tmp_c == (exp ? '\"' : '>')) {
+      read_next("Read last include symbol");
+      end_include = true;
       break;
     }
-    case '<': {
-      exp = false;
-      inc = inc.substr(1);
+    include_path += tmp_c;
+    if (!read_next("Read include path")) {
+      return false;
+    }
+  }
+  // TODO(kmosk): include_path and exp is result
+  // message((exp ? "\"\"" : "<>"), include_path, msg_type::found);
+  return true;
+}
+bool includer::parse_end_line(msg_type type, bool def) noexcept {
+  tmp_c = i_file.peek();
+  switch (tmp_c) {
+    case '\n': {  // line ends Unix style
+      if (!read_next("Parse end line Unix", type)) {
+        return false;
+      }
+      line++;
+      break;
+    }
+    case '\r': {
+      if (!read_next("Parse end line macOS", type)) {
+        return false;
+      }
+      if (i_file.peek() == '\n') {  // line ends Windows style
+        if (!read_next("Parse end line Windows", type)) {
+          return false;
+        }
+      }  // else line ends macOS style
+      line++;
       break;
     }
     default:
-      cout << "error "
-           << i.path().string() << ':' << ifile.tellg()
-           << R"(:Can not find '"' or '<')"
-           << ':' << inc << endl;
-      return false;
+      if (def) {
+        message("Parse end line error", "Wrong symbol");
+        return endl_default = true;
+      }
+      if (!read_next("Parse end line default", type)) {
+        return false;
+      }
+      break;
   }
-  include_path = inc;
-  cout << "found " << i.path().string() << ' '
-       << (exp ? '"' : '<')
-       << include_path.string()
-       << (exp ? '"' : '>') << endl;
+  return true;
+}
+void includer::message(const string &info1, const string &info2, msg_type type) const noexcept {
+  if (type != msg_type::none) {
+    cout << msg_str.at(type) << " "
+         << i_fs_file->path().string() << ':' << line
+         << ":" << info1
+         << ":" << info2 << endl;
+  }
+}
+bool includer::read_next(const string &info, msg_type type) noexcept {
+  i_file.get();
+  if (i_file.eof()) {
+    message("Unexpected end of file", info, type);
+    return false;
+  }
   return true;
 }
